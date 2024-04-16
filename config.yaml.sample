@@ -1,0 +1,10 @@
+mqttBroker: tcp://yourmqttserver:1883
+frigateURL: http://yourfrigateserver:5000
+mqttUsername: foo
+mqttPassword: foopass
+mailgunDomain: example.com
+mailgunAPIKey: keyfrommailgunportal
+emailFrom: frigate@example.com
+emailTo: me@example.com
+emailSubject: Frigate Alert
+emailBody: 'Frigate detected an event.  See attached.'
