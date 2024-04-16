@@ -166,7 +166,7 @@ func processSnapshot(event Event, conf Conf) {
 			log.Fatal(err)
 		}
 		defer out.Close()
-		//defer os.Remove(out.Name())
+		defer os.Remove(out.Name()) //cleanup
 
 		// Write the body to file
 		_, err = io.Copy(out, response.Body)
