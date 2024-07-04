@@ -150,9 +150,9 @@ func processEvent(event Event) {
 // processSnapshot processes the MQTT snapshot message and sends an email
 func processSnapshot(event Event, conf Conf) {
 	// Go get the snapshot from the API.
-	if event.Type == "update" && event.Before.HasSnapshot {
-		// Means frigate got a better snapshot for the event.
-		url := fmt.Sprintf("%s/api/events/%s/snapshot.jpg?bbox=1&crop=1", conf.FrigateURL, event.Before.ID)
+	//if event.Type == "start" && event.After.HasSnapshot && event.After.Label != "car" {
+	if event.Type == "end" && event.After.HasSnapshot {
+		url := fmt.Sprintf("%s/api/events/%s/snapshot.jpg?bbox=1&crop=1", conf.FrigateURL, event.After.ID)
 
 		response, err := http.Get(url)
 		if err != nil {
