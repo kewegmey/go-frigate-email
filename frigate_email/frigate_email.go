@@ -143,6 +143,7 @@ func createMessagePubHandler(conf Conf) mqtt.MessageHandler {
 			}
 			processEvent(event)
 			processSnapshot(event, conf)
+			processClip(event, conf)
 		}
 	}
 }
@@ -183,11 +184,11 @@ func processSnapshot(event Event, conf Conf) {
 		// GCP upload
 		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
 		// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
-		t := event.After.SnapshotTime
+		t := event.After.EndTime
 		// Convert float64 timestamp to time.Time
-		snapshotTime := int64(t)
+		endTime := int64(t.(float64))
 		// Frigate uses unix epoch seconds, so convert to time.Time
-		timeObj := time.Unix(snapshotTime, 0)
+		timeObj := time.Unix(endTime, 0)
 		year, month, day := timeObj.Date()
 		objectName := fmt.Sprintf(
 			"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
@@ -238,5 +239,51 @@ func processSnapshot(event Event, conf Conf) {
 			log.Fatal(err)
 		}
 		log.Printf("ID: %s Resp: %s\n", id, resp)
+	}
+}
+
+func processClip(event Event, conf Conf) {
+	// Go get the snapshot from the API.
+	if event.Type == "end" && event.After.HasClip && event.After.EndTime != nil {
+		url := fmt.Sprintf("%s/api/events/%s/clip.mp4", conf.FrigateURL, event.After.ID)
+
+		response, err := http.Get(url)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer response.Body.Close()
+
+		// GCP upload
+		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+		// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
+		t := event.After.EndTime
+		// Convert float64 timestamp to time.Time
+		endTime := int64(t.(float64))
+		// Frigate uses unix epoch seconds, so convert to time.Time
+		timeObj := time.Unix(endTime, 0)
+		year, month, day := timeObj.Date()
+		objectName := fmt.Sprintf(
+			"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+			year, int(month), day,
+			event.After.Camera,
+			event.After.Label,
+			event.After.ID,
+		)
+
+		ctx := context.Background()
+		client, err := storage.NewClient(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer client.Close()
+
+		wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+		if _, err = io.Copy(wc, response.Body); err != nil {
+			log.Fatal(err)
+		}
+		if err := wc.Close(); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Uploaded clip to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
 	}
 }
