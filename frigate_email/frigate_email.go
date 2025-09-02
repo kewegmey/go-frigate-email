@@ -29,6 +29,8 @@ type Conf struct {
 	EmailTo       string `yaml:"emailTo"`
 	BucketName    string `yaml:"bucketName"`
 	GCPCredPath   string `yaml:"gcpCredPath"`
+	EmailEnabled  bool   `yaml:"emailEnabled"`
+	GCPEnabled    bool   `yaml:"gcpEnabled"`
 }
 
 type Event struct {
@@ -181,64 +183,67 @@ func processSnapshot(event Event, conf Conf) {
 
 		fmt.Println("Saved snapshot to:", out.Name())
 
-		// GCP upload
-		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
-		// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
-		t := event.After.EndTime
-		// Convert float64 timestamp to time.Time
-		endTime := int64(t.(float64))
-		// Frigate uses unix epoch seconds, so convert to time.Time
-		timeObj := time.Unix(endTime, 0)
-		year, month, day := timeObj.Date()
-		objectName := fmt.Sprintf(
-			"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
-			year, int(month), day,
-			event.After.Camera,
-			event.After.Label,
-			event.After.ID,
-		)
-		file, err := os.Open(out.Name())
-		if err != nil {
-			log.Fatal(err)
+		if conf.GCPEnabled {
+			// GCP upload
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+			// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
+			t := event.After.EndTime
+			// Convert float64 timestamp to time.Time
+			endTime := int64(t.(float64))
+			// Frigate uses unix epoch seconds, so convert to time.Time
+			timeObj := time.Unix(endTime, 0)
+			year, month, day := timeObj.Date()
+			objectName := fmt.Sprintf(
+				"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+				year, int(month), day,
+				event.After.Camera,
+				event.After.Label,
+				event.After.ID,
+			)
+			file, err := os.Open(out.Name())
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer file.Close()
+
+			ctx := context.Background()
+			client, err := storage.NewClient(ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer client.Close()
+
+			wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+			if _, err = io.Copy(wc, file); err != nil { // We should probably just take this from the response.Body instead of reopening the file.
+				log.Fatal(err)
+			}
+			if err := wc.Close(); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Uploaded snapshot to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
 		}
-		defer file.Close()
+		if conf.EmailEnabled {
+			// email
+			mg := mailgun.NewMailgun(conf.MailgunDomain, conf.MailgunAPIKey)
 
-		ctx := context.Background()
-		client, err := storage.NewClient(ctx)
-		if err != nil {
-			log.Fatal(err)
+			sender := conf.EmailFrom
+			subject := conf.EmailSubject
+			body := conf.EmailBody
+			recipient := conf.EmailTo
+
+			// Create a new email message
+			msg := mg.NewMessage(sender, subject, body, recipient)
+
+			// Attach the image to the email
+			msg.AddAttachment(out.Name())
+
+			// Send the email
+			resp, id, err := mg.Send(msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("ID: %s Resp: %s\n", id, resp)
 		}
-		defer client.Close()
-
-		wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
-		if _, err = io.Copy(wc, file); err != nil { // We should probably just take this from the response.Body instead of reopening the file.
-			log.Fatal(err)
-		}
-		if err := wc.Close(); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("Uploaded snapshot to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
-
-		// email
-		mg := mailgun.NewMailgun(conf.MailgunDomain, conf.MailgunAPIKey)
-
-		sender := conf.EmailFrom
-		subject := conf.EmailSubject
-		body := conf.EmailBody
-		recipient := conf.EmailTo
-
-		// Create a new email message
-		msg := mg.NewMessage(sender, subject, body, recipient)
-
-		// Attach the image to the email
-		msg.AddAttachment(out.Name())
-
-		// Send the email
-		resp, id, err := mg.Send(msg)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("ID: %s Resp: %s\n", id, resp)
 	}
 }
 
@@ -252,38 +257,39 @@ func processClip(event Event, conf Conf) {
 			log.Fatal(err)
 		}
 		defer response.Body.Close()
+		if conf.GCPEnabled {
+			// GCP upload
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+			// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
+			t := event.After.EndTime
+			// Convert float64 timestamp to time.Time
+			endTime := int64(t.(float64))
+			// Frigate uses unix epoch seconds, so convert to time.Time
+			timeObj := time.Unix(endTime, 0)
+			year, month, day := timeObj.Date()
+			objectName := fmt.Sprintf(
+				"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+				year, int(month), day,
+				event.After.Camera,
+				event.After.Label,
+				event.After.ID,
+			)
 
-		// GCP upload
-		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
-		// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
-		t := event.After.EndTime
-		// Convert float64 timestamp to time.Time
-		endTime := int64(t.(float64))
-		// Frigate uses unix epoch seconds, so convert to time.Time
-		timeObj := time.Unix(endTime, 0)
-		year, month, day := timeObj.Date()
-		objectName := fmt.Sprintf(
-			"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
-			year, int(month), day,
-			event.After.Camera,
-			event.After.Label,
-			event.After.ID,
-		)
+			ctx := context.Background()
+			client, err := storage.NewClient(ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer client.Close()
 
-		ctx := context.Background()
-		client, err := storage.NewClient(ctx)
-		if err != nil {
-			log.Fatal(err)
+			wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+			if _, err = io.Copy(wc, response.Body); err != nil {
+				log.Fatal(err)
+			}
+			if err := wc.Close(); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Uploaded clip to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
 		}
-		defer client.Close()
-
-		wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
-		if _, err = io.Copy(wc, response.Body); err != nil {
-			log.Fatal(err)
-		}
-		if err := wc.Close(); err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("Uploaded clip to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
 	}
 }
