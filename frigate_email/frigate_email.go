@@ -260,7 +260,6 @@ func processClip(event Event, conf Conf) {
 		if conf.GCPEnabled {
 			// GCP upload
 			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
-			// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
 			t := event.After.EndTime
 			// Convert float64 timestamp to time.Time
 			endTime := int64(t.(float64))
@@ -268,7 +267,7 @@ func processClip(event Event, conf Conf) {
 			timeObj := time.Unix(endTime, 0)
 			year, month, day := timeObj.Date()
 			objectName := fmt.Sprintf(
-				"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+				"clips/%04d/%02d/%02d/%s/%s/%s.mp4",
 				year, int(month), day,
 				event.After.Camera,
 				event.After.Label,
