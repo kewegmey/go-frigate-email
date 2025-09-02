@@ -1,6 +1,7 @@
 package frigate_email
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -248,16 +249,33 @@ func processSnapshot(event Event, conf Conf) {
 }
 
 func processClip(event Event, conf Conf) {
-	// Go get the snapshot from the API.
 	if event.Type == "end" && event.After.HasClip && event.After.EndTime != nil {
 		url := fmt.Sprintf("%s/api/events/%s/clip.mp4", conf.FrigateURL, event.After.ID)
 
-		response, err := http.Get(url)
-		if err != nil {
-			log.Fatal(err)
+		var validReader io.ReadCloser
+		haveClip := false
+		for i := 0; i < 2; i++ {
+			response, err := http.Get(url)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer response.Body.Close()
+
+			bodyBytes, err := io.ReadAll(response.Body)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if len(bodyBytes) == 0 {
+				log.Println("Clip response body is empty.")
+				time.Sleep(300 * time.Millisecond)
+				continue
+			} else {
+				validReader = io.NopCloser(bytes.NewReader(bodyBytes))
+				haveClip = true
+				break
+			}
 		}
-		defer response.Body.Close()
-		if conf.GCPEnabled {
+		if conf.GCPEnabled && haveClip {
 			// GCP upload
 			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
 			t := event.After.EndTime
@@ -282,7 +300,7 @@ func processClip(event Event, conf Conf) {
 			defer client.Close()
 
 			wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
-			if _, err = io.Copy(wc, response.Body); err != nil {
+			if _, err = io.Copy(wc, validReader); err != nil {
 				log.Fatal(err)
 			}
 			if err := wc.Close(); err != nil {
