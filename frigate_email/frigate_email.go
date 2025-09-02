@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"cloud.google.com/go/storage"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -181,7 +182,20 @@ func processSnapshot(event Event, conf Conf) {
 
 		// GCP upload
 		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
-		objectName := fmt.Sprintf("snapshots/%s.jpg", event.After.ID)
+		// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
+		t := event.After.SnapshotTime
+		// Convert float64 timestamp to time.Time
+		snapshotTime := int64(t)
+		// Frigate uses unix epoch seconds, so convert to time.Time
+		timeObj := time.Unix(snapshotTime, 0)
+		year, month, day := timeObj.Date()
+		objectName := fmt.Sprintf(
+			"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+			year, int(month), day,
+			event.After.Camera,
+			event.After.Label,
+			event.After.ID,
+		)
 		file, err := os.Open(out.Name())
 		if err != nil {
 			log.Fatal(err)
