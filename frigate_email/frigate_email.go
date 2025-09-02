@@ -254,7 +254,7 @@ func processClip(event Event, conf Conf) {
 
 		var validReader io.ReadCloser
 		haveClip := false
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 20; i++ {
 			response, err := http.Get(url)
 			if err != nil {
 				log.Fatal(err)
@@ -266,7 +266,7 @@ func processClip(event Event, conf Conf) {
 				log.Fatal(err)
 			}
 			if len(bodyBytes) == 0 {
-				log.Println("Clip response body is empty.")
+				log.Printf("Clip response body is empty: %s", url)
 				time.Sleep(300 * time.Millisecond)
 				continue
 			} else {
