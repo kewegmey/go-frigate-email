@@ -151,7 +151,7 @@ func processEvent(event Event) {
 func processSnapshot(event Event, conf Conf) {
 	// Go get the snapshot from the API.
 	//if event.Type == "start" && event.After.HasSnapshot && event.After.Label != "car" {
-	if event.Type == "end" && event.After.HasSnapshot {
+	if event.Type == "end" && event.After.HasSnapshot && event.After.EndTime != nil {
 		url := fmt.Sprintf("%s/api/events/%s/snapshot.jpg?bbox=1&crop=1", conf.FrigateURL, event.After.ID)
 
 		response, err := http.Get(url)
