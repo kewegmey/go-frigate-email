@@ -254,7 +254,7 @@ func processClip(event Event, conf Conf) {
 
 		var validReader io.ReadCloser
 		haveClip := false
-		for i := 0; i < 2; i++ {
+		for i := 0; i < 10; i++ {
 			response, err := http.Get(url)
 			if err != nil {
 				log.Fatal(err)
