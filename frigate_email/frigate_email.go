@@ -194,7 +194,7 @@ func processSnapshot(event Event, conf Conf) {
 			timeObj := time.Unix(endTime, 0)
 			year, month, day := timeObj.Date()
 			objectName := fmt.Sprintf(
-				"snapshots/%04d/%02d/%02d/%s/%s/%s.jpg",
+				"%04d/%02d/%02d/%s/%s/%s.jpg",
 				year, int(month), day,
 				event.After.Camera,
 				event.After.Label,
@@ -267,7 +267,7 @@ func processClip(event Event, conf Conf) {
 			timeObj := time.Unix(endTime, 0)
 			year, month, day := timeObj.Date()
 			objectName := fmt.Sprintf(
-				"clips/%04d/%02d/%02d/%s/%s/%s.mp4",
+				"%04d/%02d/%02d/%s/%s/%s.mp4",
 				year, int(month), day,
 				event.After.Camera,
 				event.After.Label,
