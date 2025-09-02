@@ -112,6 +112,7 @@ func Start(configPath string) {
 	log.Println("MQTT Broker:", conf.MqttBroker)
 	opts := mqtt.NewClientOptions().AddBroker(conf.MqttBroker)
 	opts.SetDefaultPublishHandler(createMessagePubHandler(conf))
+	opts.AutoReconnect = true
 
 	// Set MQTT authentication
 	opts.SetUsername(conf.MqttUsername)
