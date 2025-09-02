@@ -1,6 +1,7 @@
 package frigate_email
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 
+	"cloud.google.com/go/storage"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/mailgun/mailgun-go"
 	"gopkg.in/yaml.v2"
@@ -24,6 +26,8 @@ type Conf struct {
 	EmailSubject  string `yaml:"emailSubject"`
 	EmailBody     string `yaml:"emailBody"`
 	EmailTo       string `yaml:"emailTo"`
+	BucketName    string `yaml:"bucketName"`
+	GCPCredPath   string `yaml:"gcpCredPath"`
 }
 
 type Event struct {
@@ -150,7 +154,6 @@ func processEvent(event Event) {
 // processSnapshot processes the MQTT snapshot message and sends an email
 func processSnapshot(event Event, conf Conf) {
 	// Go get the snapshot from the API.
-	//if event.Type == "start" && event.After.HasSnapshot && event.After.Label != "car" {
 	if event.Type == "end" && event.After.HasSnapshot && event.After.EndTime != nil {
 		url := fmt.Sprintf("%s/api/events/%s/snapshot.jpg?bbox=1&crop=1", conf.FrigateURL, event.After.ID)
 
@@ -176,6 +179,32 @@ func processSnapshot(event Event, conf Conf) {
 
 		fmt.Println("Saved snapshot to:", out.Name())
 
+		// GCP upload
+		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+		objectName := fmt.Sprintf("snapshots/%s.jpg", event.After.ID)
+		file, err := os.Open(out.Name())
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+
+		ctx := context.Background()
+		client, err := storage.NewClient(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer client.Close()
+
+		wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+		if _, err = io.Copy(wc, file); err != nil { // We should probably just take this from the response.Body instead of reopening the file.
+			log.Fatal(err)
+		}
+		if err := wc.Close(); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("Uploaded snapshot to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
+
+		// email
 		mg := mailgun.NewMailgun(conf.MailgunDomain, conf.MailgunAPIKey)
 
 		sender := conf.EmailFrom
@@ -196,5 +225,4 @@ func processSnapshot(event Event, conf Conf) {
 		}
 		log.Printf("ID: %s Resp: %s\n", id, resp)
 	}
-
 }
