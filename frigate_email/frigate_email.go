@@ -145,16 +145,20 @@ func createMessagePubHandler(conf Conf) mqtt.MessageHandler {
 			if err := json.Unmarshal(msg.Payload(), &event); err != nil {
 				log.Fatal(err)
 			}
-			processEvent(event)
-			processSnapshot(event, conf)
-			processClip(event, conf)
+			go processEvent(event)
+			go processSnapshot(event, conf)
+			go processClip(event, conf)
 		}
 	}
 }
 
 // processEvent processes the MQTT event message
 func processEvent(event Event) {
-	prettyPrint(event)
+	log.Printf("Event type: %s, ID: %s, Camera: %s, Label: %s, HasClip: %t, HasSnapshot: %t\n",
+		event.Type, event.After.ID, event.After.Camera, event.After.Label, event.After.HasClip, event.After.HasSnapshot)
+	if event.Type == "end" && event.After.HasClip && event.After.EndTime != nil {
+		prettyPrint(event)
+	}
 }
 
 // processSnapshot processes the MQTT snapshot message and sends an email
