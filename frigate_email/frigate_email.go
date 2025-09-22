@@ -32,6 +32,9 @@ type Conf struct {
 	GCPCredPath   string `yaml:"gcpCredPath"`
 	EmailEnabled  bool   `yaml:"emailEnabled"`
 	GCPEnabled    bool   `yaml:"gcpEnabled"`
+	WebcamEnabled bool   `yaml:"webcamEnabled"`
+	Webcam        string `yaml:"webcam"`
+	WebcamBucket  string `yaml:"webcamBucket"`
 }
 
 type Event struct {
@@ -106,6 +109,10 @@ func Start(configPath string) {
 	if err != nil {
 		log.Println("Error reading configuration file:", err)
 		log.Fatal(err)
+	}
+
+	if conf.WebcamEnabled {
+		log.Printf("Webcam is enabled. Sending snapshots from %s to %s\n", conf.Webcam, conf.WebcamBucket)
 	}
 
 	// MQTT client options
