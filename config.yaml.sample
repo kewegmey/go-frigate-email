@@ -8,3 +8,7 @@ emailFrom: frigate@example.com
 emailTo: me@example.com
 emailSubject: Frigate Alert
 emailBody: 'Frigate detected an event.  See attached.'
+bucketName: my-bucket
+gcpCredPath: /foo/bar
+emailEnabled: true
+gcpEnabled: true

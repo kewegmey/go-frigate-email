@@ -1,13 +1,17 @@
 package frigate_email
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"cloud.google.com/go/storage"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/mailgun/mailgun-go"
 	"gopkg.in/yaml.v2"
@@ -24,6 +28,10 @@ type Conf struct {
 	EmailSubject  string `yaml:"emailSubject"`
 	EmailBody     string `yaml:"emailBody"`
 	EmailTo       string `yaml:"emailTo"`
+	BucketName    string `yaml:"bucketName"`
+	GCPCredPath   string `yaml:"gcpCredPath"`
+	EmailEnabled  bool   `yaml:"emailEnabled"`
+	GCPEnabled    bool   `yaml:"gcpEnabled"`
 }
 
 type Event struct {
@@ -104,6 +112,7 @@ func Start(configPath string) {
 	log.Println("MQTT Broker:", conf.MqttBroker)
 	opts := mqtt.NewClientOptions().AddBroker(conf.MqttBroker)
 	opts.SetDefaultPublishHandler(createMessagePubHandler(conf))
+	opts.AutoReconnect = true
 
 	// Set MQTT authentication
 	opts.SetUsername(conf.MqttUsername)
@@ -136,22 +145,26 @@ func createMessagePubHandler(conf Conf) mqtt.MessageHandler {
 			if err := json.Unmarshal(msg.Payload(), &event); err != nil {
 				log.Fatal(err)
 			}
-			processEvent(event)
-			processSnapshot(event, conf)
+			go processEvent(event)
+			go processSnapshot(event, conf)
+			go processClip(event, conf)
 		}
 	}
 }
 
 // processEvent processes the MQTT event message
 func processEvent(event Event) {
-	prettyPrint(event)
+	log.Printf("Event type: %s, ID: %s, Camera: %s, Label: %s, HasClip: %t, HasSnapshot: %t\n",
+		event.Type, event.After.ID, event.After.Camera, event.After.Label, event.After.HasClip, event.After.HasSnapshot)
+	if event.Type == "end" && event.After.HasClip && event.After.EndTime != nil {
+		prettyPrint(event)
+	}
 }
 
 // processSnapshot processes the MQTT snapshot message and sends an email
 func processSnapshot(event Event, conf Conf) {
 	// Go get the snapshot from the API.
-	//if event.Type == "start" && event.After.HasSnapshot && event.After.Label != "car" {
-	if event.Type == "end" && event.After.HasSnapshot {
+	if event.Type == "end" && event.After.HasSnapshot && event.After.EndTime != nil {
 		url := fmt.Sprintf("%s/api/events/%s/snapshot.jpg?bbox=1&crop=1", conf.FrigateURL, event.After.ID)
 
 		response, err := http.Get(url)
@@ -176,25 +189,129 @@ func processSnapshot(event Event, conf Conf) {
 
 		fmt.Println("Saved snapshot to:", out.Name())
 
-		mg := mailgun.NewMailgun(conf.MailgunDomain, conf.MailgunAPIKey)
+		if conf.GCPEnabled {
+			// GCP upload
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+			// Build object path: snapshots/${year}/${month}/${day}/${camera}/${object type}/${id}.jpg
+			t := event.After.EndTime
+			// Convert float64 timestamp to time.Time
+			endTime := int64(t.(float64))
+			// Frigate uses unix epoch seconds, so convert to time.Time
+			timeObj := time.Unix(endTime, 0)
+			year, month, day := timeObj.Date()
+			objectName := fmt.Sprintf(
+				"%04d/%02d/%02d/%s/%s/%s.jpg",
+				year, int(month), day,
+				event.After.Camera,
+				event.After.Label,
+				event.After.ID,
+			)
+			file, err := os.Open(out.Name())
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer file.Close()
 
-		sender := conf.EmailFrom
-		subject := conf.EmailSubject
-		body := conf.EmailBody
-		recipient := conf.EmailTo
+			ctx := context.Background()
+			client, err := storage.NewClient(ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer client.Close()
 
-		// Create a new email message
-		msg := mg.NewMessage(sender, subject, body, recipient)
-
-		// Attach the image to the email
-		msg.AddAttachment(out.Name())
-
-		// Send the email
-		resp, id, err := mg.Send(msg)
-		if err != nil {
-			log.Fatal(err)
+			wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+			if _, err = io.Copy(wc, file); err != nil { // We should probably just take this from the response.Body instead of reopening the file.
+				log.Fatal(err)
+			}
+			if err := wc.Close(); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Uploaded snapshot to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
 		}
-		log.Printf("ID: %s Resp: %s\n", id, resp)
-	}
+		if conf.EmailEnabled {
+			// email
+			mg := mailgun.NewMailgun(conf.MailgunDomain, conf.MailgunAPIKey)
 
+			sender := conf.EmailFrom
+			subject := conf.EmailSubject
+			body := conf.EmailBody
+			recipient := conf.EmailTo
+
+			// Create a new email message
+			msg := mg.NewMessage(sender, subject, body, recipient)
+
+			// Attach the image to the email
+			msg.AddAttachment(out.Name())
+
+			// Send the email
+			resp, id, err := mg.Send(msg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("ID: %s Resp: %s\n", id, resp)
+		}
+	}
+}
+
+func processClip(event Event, conf Conf) {
+	if event.Type == "end" && event.After.HasClip && event.After.EndTime != nil {
+		url := fmt.Sprintf("%s/api/events/%s/clip.mp4", conf.FrigateURL, event.After.ID)
+
+		var validReader io.ReadCloser
+		haveClip := false
+		for i := 0; i < 20; i++ {
+			response, err := http.Get(url)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer response.Body.Close()
+
+			bodyBytes, err := io.ReadAll(response.Body)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if len(bodyBytes) == 0 {
+				log.Printf("Clip response body is empty: %s", url)
+				time.Sleep(300 * time.Millisecond)
+				continue
+			} else {
+				validReader = io.NopCloser(bytes.NewReader(bodyBytes))
+				haveClip = true
+				break
+			}
+		}
+		if conf.GCPEnabled && haveClip {
+			// GCP upload
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", conf.GCPCredPath)
+			t := event.After.EndTime
+			// Convert float64 timestamp to time.Time
+			endTime := int64(t.(float64))
+			// Frigate uses unix epoch seconds, so convert to time.Time
+			timeObj := time.Unix(endTime, 0)
+			year, month, day := timeObj.Date()
+			objectName := fmt.Sprintf(
+				"%04d/%02d/%02d/%s/%s/%s.mp4",
+				year, int(month), day,
+				event.After.Camera,
+				event.After.Label,
+				event.After.ID,
+			)
+
+			ctx := context.Background()
+			client, err := storage.NewClient(ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			defer client.Close()
+
+			wc := client.Bucket(conf.BucketName).Object(objectName).NewWriter(ctx)
+			if _, err = io.Copy(wc, validReader); err != nil {
+				log.Fatal(err)
+			}
+			if err := wc.Close(); err != nil {
+				log.Fatal(err)
+			}
+			log.Printf("Uploaded clip to GCP bucket: gs://%s/%s\n", conf.BucketName, objectName)
+		}
+	}
 }
